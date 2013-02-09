@@ -14,39 +14,38 @@
  * limitations under the License.
  */
 
-package com.github.tototoshi.play2.json
+package playArgonaut
 
+import argonaut.{Json, JsonParser}
 import play.api._
 import play.api.http._
 import play.api.mvc._
 import play.api.libs.iteratee._
-import net.liftweb.json.{ JValue => LiftJValue, _ }
 import scala.language.reflectiveCalls
 
-trait LiftJsonWriteable { self: LiftJsonContentTypeOf =>
+trait ArgonautWriteable { self: ArgonautContentTypeOf =>
 
-  implicit def writeableOf_LiftJValue(implicit codec: Codec): Writeable[LiftJValue] = {
-    Writeable((jval: LiftJValue) => codec.encode((pretty(render(jval)))))
+  implicit def writeableOf_Json(implicit codec: Codec): Writeable[Json] = {
+    Writeable((jval: Json) => codec.encode(jval.nospaces))
   }
 
 }
 
-trait LiftJsonContentTypeOf { self: LiftJsonWriteable =>
+trait ArgonautContentTypeOf { self: ArgonautWriteable =>
 
-  implicit def contentTypeOf_JsValue(implicit codec: Codec): ContentTypeOf[LiftJValue] = {
+  implicit def contentTypeOf_JsValue(implicit codec: Codec): ContentTypeOf[Json] = {
     ContentTypeOf(Some(ContentTypes.JSON))
   }
 
 }
 
-trait LiftJsonParser {
+trait ArgonautParser {
 
-  def tolerantJson(maxLength: Int): BodyParser[LiftJValue] = BodyParser("json, maxLength=" + maxLength) { request =>
+  def tolerantJson(maxLength: Int): BodyParser[Json] = BodyParser("json, maxLength=" + maxLength) { request =>
     play.api.libs.iteratee.Traversable.takeUpTo[Array[Byte]](maxLength).apply(Iteratee.consume[Array[Byte]]().map { bytes =>
-      scala.util.control.Exception.allCatch[LiftJValue].either {
-        JsonParser.parse(new String(bytes, request.charset.getOrElse("utf-8")))
-      }.left.map { e =>
-        (Play.maybeApplication.map(_.global.onBadRequest(request, "Invalid Json")).getOrElse(Results.BadRequest), bytes)
+      JsonParser.parse(new String(bytes, request.charset.getOrElse("utf-8"))).toEither.left.map{
+        e =>
+        (Play.maybeApplication.map(_.global.onBadRequest(request, s"Invalid Json $e")).getOrElse(Results.BadRequest), bytes)
       }
     }).flatMap(Iteratee.eofOrElse(Results.EntityTooLarge))
     .flatMap {
@@ -58,18 +57,20 @@ trait LiftJsonParser {
     }
   }
 
-  def tolerantJson: BodyParser[LiftJValue] = tolerantJson(BodyParsers.parse.DEFAULT_MAX_TEXT_LENGTH)
+  def tolerantJson: BodyParser[Json] = tolerantJson(BodyParsers.parse.DEFAULT_MAX_TEXT_LENGTH)
 
-  def liftJson(maxLength: Int): BodyParser[LiftJValue] = BodyParsers.parse.when(
-    _.contentType.exists(m => m == "text/json" || m == "application/json"),
+  def acceptTypes = Set("text/json", "application/json")
+
+  def argonaut(maxLength: Int): BodyParser[Json] = BodyParsers.parse.when(
+    _.contentType.exists(acceptTypes.contains),
     tolerantJson(maxLength),
     request => Play.maybeApplication.map(_.global.onBadRequest(request, "Expecting text/json or application/json body")).getOrElse(Results.BadRequest)
   )
 
-  def liftJson: BodyParser[LiftJValue] = liftJson(BodyParsers.parse.DEFAULT_MAX_TEXT_LENGTH)
+  def argonaut: BodyParser[Json] = argonaut(BodyParsers.parse.DEFAULT_MAX_TEXT_LENGTH)
 
 }
 
-trait LiftJson extends LiftJsonParser with LiftJsonWriteable with LiftJsonContentTypeOf
+trait PlayArgonaut extends ArgonautParser with ArgonautWriteable with ArgonautContentTypeOf
 
 
